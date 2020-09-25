@@ -1,80 +1,198 @@
 package org.joychou.controller;
 
 
-import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseBody;
+import org.joychou.mapper.UserMapper;
+import org.joychou.dao.User;
+import org.joychou.security.SecurityUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.bind.annotation.*;
 
-import javax.servlet.http.HttpServletRequest;
 import java.sql.*;
+import java.util.List;
 
 
 /**
- * Date：2018年08月22日
- * Author: JoyChou
- * Desc: SQL注入漏洞
+ * SQL Injection
+ *
+ * @author JoyChou @2018.08.22
  */
 
-@Controller
+@SuppressWarnings("Duplicates")
+@RestController
 @RequestMapping("/sqli")
 public class SQLI {
 
-    @RequestMapping("/jdbc")
-    @ResponseBody
-    public static String jdbc_sqli(HttpServletRequest request){
+    private static Logger logger = LoggerFactory.getLogger(SQLI.class);
+    private static String driver = "com.mysql.jdbc.Driver";
 
-        String name = request.getParameter("name");
-        String driver = "com.mysql.jdbc.Driver";
-        String url = "jdbc:mysql://localhost:3306/sectest";
-        String user = "root";
-        String password = "woshishujukumima";
-        String result = "";
+    @Value("${spring.datasource.url}")
+    private String url;
+
+    @Value("${spring.datasource.username}")
+    private String user;
+
+    @Value("${spring.datasource.password}")
+    private String password;
+
+    @Autowired
+    private UserMapper userMapper;
+
+
+    /**
+     * Vuln Code.
+     * http://localhost:8080/sqli/jdbc/vul?username=joychou
+     *
+     * @param username username
+     */
+    @RequestMapping("/jdbc/vuln")
+    public String jdbc_sqli_vul(@RequestParam("username") String username) {
+
+        StringBuilder result = new StringBuilder();
+
         try {
             Class.forName(driver);
-            Connection con = DriverManager.getConnection(url,user,password);
+            Connection con = DriverManager.getConnection(url, user, password);
 
-            if(!con.isClosed())
-                System.out.println("Connecting to Database successfully.");
+            if (!con.isClosed())
+                System.out.println("Connect to database successfully.");
 
-            // sqli vuln code 漏洞代码
-             Statement statement = con.createStatement();
-             String sql = "select * from users where name = '" + name + "'";
-             System.out.println(sql);
-             ResultSet rs = statement.executeQuery(sql);
+            // sqli vuln code
+            Statement statement = con.createStatement();
+            String sql = "select * from users where username = '" + username + "'";
+            logger.info(sql);
+            ResultSet rs = statement.executeQuery(sql);
 
-            // fix code 用预处理修复SQL注入
-//            String sql = "select * from users where name = ?";
-//            PreparedStatement st = con.prepareStatement(sql);
-//            st.setString(1, name);
-//            System.out.println(st.toString());  // 预处理后的sql
-//            ResultSet rs = st.executeQuery();
-
-            System.out.println("-----------------");
-
-            while(rs.next()){
-                String res_name = rs.getString("name");
+            while (rs.next()) {
+                String res_name = rs.getString("username");
                 String res_pwd = rs.getString("password");
-                result +=  res_name + ": " + res_pwd + "\n";
-                System.out.println(res_name + ": " + res_pwd);
-
+                String info = String.format("%s: %s\n", res_name, res_pwd);
+                result.append(info);
+                logger.info(info);
             }
             rs.close();
             con.close();
 
 
-        }catch (ClassNotFoundException e) {
-            System.out.println("Sorry,can`t find the Driver!");
-            e.printStackTrace();
-        }catch (SQLException e) {
-            e.printStackTrace();
-        }catch (Exception e) {
-            e.printStackTrace();
-
-        }finally{
-            System.out.println("-----------------");
-            System.out.println("Connect database done.");
+        } catch (ClassNotFoundException e) {
+            logger.error("Sorry,can`t find the Driver!");
+        } catch (SQLException e) {
+            logger.error(e.toString());
         }
-        return result;
+        return result.toString();
+    }
+
+
+    /**
+     * Security Code.
+     * http://localhost:8080/sqli/jdbc/sec?username=joychou
+     *
+     * @param username username
+     */
+    @RequestMapping("/jdbc/sec")
+    public String jdbc_sqli_sec(@RequestParam("username") String username) {
+
+        StringBuilder result = new StringBuilder();
+        try {
+            Class.forName(driver);
+            Connection con = DriverManager.getConnection(url, user, password);
+
+            if (!con.isClosed())
+                System.out.println("Connecting to Database successfully.");
+
+            // fix code
+            String sql = "select * from users where username = ?";
+            PreparedStatement st = con.prepareStatement(sql);
+            st.setString(1, username);
+
+            logger.info(st.toString());  // sql after prepare statement
+            ResultSet rs = st.executeQuery();
+
+            while (rs.next()) {
+                String res_name = rs.getString("username");
+                String res_pwd = rs.getString("password");
+                String info = String.format("%s: %s\n", res_name, res_pwd);
+                result.append(info);
+                logger.info(info);
+            }
+
+            rs.close();
+            con.close();
+
+        } catch (ClassNotFoundException e) {
+            logger.error("Sorry, can`t find the Driver!");
+            e.printStackTrace();
+        } catch (SQLException e) {
+            logger.error(e.toString());
+        }
+        return result.toString();
+    }
+
+    /**
+     * vuln code
+     * http://localhost:8080/sqli/mybatis/vuln01?username=joychou' or '1'='1
+     *
+     * @param username username
+     */
+    @GetMapping("/mybatis/vuln01")
+    public List<User> mybatisVuln01(@RequestParam("username") String username) {
+        return userMapper.findByUserNameVuln01(username);
+    }
+
+    /**
+     * vul code
+     * http://localhost:8080/sqli/mybatis/vuln02?username=joychou' or '1'='1' %23
+     *
+     * @param username username
+     */
+    @GetMapping("/mybatis/vuln02")
+    public List<User> mybatisVuln02(@RequestParam("username") String username) {
+        return userMapper.findByUserNameVuln02(username);
+    }
+
+    // http://localhost:8080/sqli/mybatis/orderby/vuln03?sort=1 desc%23
+    @GetMapping("/mybatis/orderby/vuln03")
+    public List<User> mybatisVuln03(@RequestParam("sort") String sort) {
+        return userMapper.findByUserNameVuln03(sort);
+    }
+
+
+    /**
+     * security code
+     * http://localhost:8080/sqli/mybatis/sec01?username=joychou
+     *
+     * @param username username
+     */
+    @GetMapping("/mybatis/sec01")
+    public User mybatisSec01(@RequestParam("username") String username) {
+        return userMapper.findByUserName(username);
+    }
+
+    /**
+     * http://localhost:8080/sqli/mybatis/sec02?id=1
+     *
+     * @param id id
+     */
+    @GetMapping("/mybatis/sec02")
+    public User mybatisSec02(@RequestParam("id") Integer id) {
+        return userMapper.findById(id);
+    }
+
+
+    /**
+     * http://localhost:8080/sqli/mybatis/sec03
+     */
+    @GetMapping("/mybatis/sec03")
+    public User mybatisSec03() {
+        return userMapper.OrderByUsername();
+    }
+
+
+    @GetMapping("/mybatis/orderby/sec04")
+    public List<User> mybatisOrderBySec04(@RequestParam("sort") String sort) {
+        return userMapper.findByUserNameVuln03(SecurityUtil.sqlFilter(sort));
     }
 
 }
